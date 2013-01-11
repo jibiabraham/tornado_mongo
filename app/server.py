@@ -25,7 +25,7 @@ class TM(tornado.web.Application):
 
         app_settings = {
             "static_path": os.path.join(os.path.dirname(__file__), "static"),
-            "cookie_secret": "61oETzKXQAGaYdkL5gEmGeJJFuYh7EQnp2XdTP1o/Vo=",
+            "cookie_secret": "asdasd",
             "login_url": "/",
             "template_loader" : tornado.template.Loader(TEMPLATE_ROOT),
             "autoescape" : None,
