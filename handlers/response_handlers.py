@@ -23,9 +23,7 @@ class BaseHandler(tornado.web.RequestHandler):
 
 class HomeHandler(BaseHandler):
     def get(self):
-        entries = self.db.query("SELECT * FROM entries ORDER BY published "
-                                "DESC LIMIT 5")
-        mongo_entries = Entries.objects().all().order_by("-published").limit(5)
+        entries = Entries.objects().all().order_by("-published").limit(5)
         if not entries:
             self.redirect("/compose")
             return
