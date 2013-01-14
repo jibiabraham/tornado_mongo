@@ -8,21 +8,24 @@ import tornado.options
 import tornado.web
 import unicodedata
 
+from models import *
+
 class BaseHandler(tornado.web.RequestHandler):
     @property
     def db(self):
         return self.application.db
 
     def get_current_user(self):
-        user_id = self.get_secure_cookie("user")
-        if not user_id: return None
-        return self.db.get("SELECT * FROM authors WHERE id = %s", int(user_id))
+        user_email = self.get_secure_cookie("user")
+        if not user_email: return None
+        return User.objects(email=user_email).get()
 
 
 class HomeHandler(BaseHandler):
     def get(self):
         entries = self.db.query("SELECT * FROM entries ORDER BY published "
                                 "DESC LIMIT 5")
+        mongo_entries = Entries.objects().all().order_by("-published").limit(5)
         if not entries:
             self.redirect("/compose")
             return
@@ -31,22 +34,20 @@ class HomeHandler(BaseHandler):
 
 class EntryHandler(BaseHandler):
     def get(self, slug):
-        entry = self.db.get("SELECT * FROM entries WHERE slug = %s", slug)
+        entry = Entries.objects(slug=slug).get()
         if not entry: raise tornado.web.HTTPError(404)
         self.render("entry.html", entry=entry)
 
 
 class ArchiveHandler(BaseHandler):
     def get(self):
-        entries = self.db.query("SELECT * FROM entries ORDER BY published "
-                                "DESC")
+        entries = Entries.objects().all().order_by("-published")
         self.render("archive.html", entries=entries)
 
 
 class FeedHandler(BaseHandler):
     def get(self):
-        entries = self.db.query("SELECT * FROM entries ORDER BY published "
-                                "DESC LIMIT 10")
+        entries = Entries.objects().all().order_by("-published").limit(10)
         self.set_header("Content-Type", "application/atom+xml")
         self.render("feed.xml", entries=entries)
 
@@ -54,25 +55,23 @@ class FeedHandler(BaseHandler):
 class ComposeHandler(BaseHandler):
     @tornado.web.authenticated
     def get(self):
-        id = self.get_argument("id", None)
+        slug = self.get_argument("slug", None)
+        print slug
         entry = None
-        if id:
-            entry = self.db.get("SELECT * FROM entries WHERE id = %s", int(id))
+        if slug:
+            entry = Entries.objects(slug=slug).get()
         self.render("compose.html", entry=entry)
 
     @tornado.web.authenticated
     def post(self):
-        id = self.get_argument("id", None)
+        slug = self.get_argument("slug", None)
         title = self.get_argument("title")
         text = self.get_argument("markdown")
         html = markdown.markdown(text)
-        if id:
-            entry = self.db.get("SELECT * FROM entries WHERE id = %s", int(id))
-            if not entry: raise tornado.web.HTTPError(404)
-            slug = entry.slug
-            self.db.execute(
-                "UPDATE entries SET title = %s, markdown = %s, html = %s "
-                "WHERE id = %s", title, text, html, int(id))
+        if slug:
+            entry = Entries.objects(slug=slug)
+            if not entry.get(): raise tornado.web.HTTPError(404)
+            entry.update(set__title=title, set__markdown=text, set__html=html)
         else:
             slug = unicodedata.normalize("NFKD", title).encode(
                 "ascii", "ignore")
@@ -80,13 +79,12 @@ class ComposeHandler(BaseHandler):
             slug = "-".join(slug.lower().strip().split())
             if not slug: slug = "entry"
             while True:
-                e = self.db.get("SELECT * FROM entries WHERE slug = %s", slug)
-                if not e: break
+                e = Entries.objects(slug=slug).count()
+                if e == 0: break
                 slug += "-2"
-            self.db.execute(
-                "INSERT INTO entries (author_id,title,slug,markdown,html,"
-                "published) VALUES (%s,%s,%s,%s,%s,UTC_TIMESTAMP())",
-                self.current_user.id, title, slug, text, html)
+            current_user = User.objects(email=self.current_user.email).get()
+            entry = Entries(slug=slug, title=title, html=html, markdown=text, author=current_user)
+            entry.save()
         self.redirect("/entry/" + slug)
 
 
@@ -101,21 +99,15 @@ class AuthLoginHandler(BaseHandler, tornado.auth.GoogleMixin):
     def _on_auth(self, user):
         if not user:
             raise tornado.web.HTTPError(500, "Google auth failed")
-        author = self.db.get("SELECT * FROM authors WHERE email = %s",
-                             user["email"])
-        if not author:
-            # Auto-create first author
-            any_author = self.db.get("SELECT * FROM authors LIMIT 1")
-            if not any_author:
-                author_id = self.db.execute(
-                    "INSERT INTO authors (email,name) VALUES (%s,%s)",
-                    user["email"], user["name"])
-            else:
-                self.redirect("/")
-                return
+
+        mongo_user = User.objects(email=user["email"])
+        if mongo_user.first() == None:
+            mongo_user = User(email=user["email"], name=user["name"])
+            mongo_user.save()
         else:
-            author_id = author["id"]
-        self.set_secure_cookie("user", str(author_id))
+            mongo_user = mongo_user.first()
+
+        self.set_secure_cookie("user", str(mongo_user.email))
         self.redirect(self.get_argument("next", "/"))
 
 
